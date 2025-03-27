@@ -1,0 +1,32 @@
+services:
+  face-recognition:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: tail -f /dev/null
+    volumes:
+      - ./app:/app
+      - pip_cache:/root/.cache/pip
+      - /dev:/dev
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+      - DISPLAY=${DISPLAY:-:0}  # X11 顯示設定
+      - QT_X11_NO_MITSHM=1     # X11 共享記憶體設定
+    privileged: true
+    devices:
+      - /dev/video0:/dev/video0  # 映射相機設備
+      - /dev/video1:/dev/video1  # 備用相機設備
+    network_mode: "host"  # 使用主機網路模式
+    depends_on:
+      - mongo
+    ports:
+      - "8000:8000"
+  mongo:
+    image: mongo:latest
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+volumes:
+  mongo_data:
+  pip_cache:
