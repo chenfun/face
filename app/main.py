@@ -54,8 +54,8 @@ class PersonTracker:
                 logger.warning(f"人臉圖像太小，無法進行分析: {face_image.shape}")
                 # 設定默認值
                 self.gender_age_data[person_id] = {
-                    'gender': 'N/A',
-                    'age': 'N/A'  # 默認年齡
+                    'gender': '未知',
+                    'age': 30  # 默認年齡
                 }
                 return
                 
@@ -64,31 +64,59 @@ class PersonTracker:
                 logger.warning("圖像不是彩色的，轉換為彩色")
                 face_image = cv2.cvtColor(face_image, cv2.COLOR_GRAY2BGR)
             
-            # 放大圖像以提高分析準確度
-            face_image = cv2.resize(face_image, (0, 0), fx=2, fy=2)
+            # 儲存圖像到臨時文件進行分析，這比直接使用內存中的圖像更穩定
+            temp_img_path = f"/tmp/face_{person_id}.jpg"
+            cv2.imwrite(temp_img_path, face_image)
             
-            # 使用簡化的參數調用DeepFace
-            result = DeepFace.analyze(
-                img_path=face_image, 
-                actions=['age', 'gender'],
-                enforce_detection=False,  # 避免再次進行人臉檢測
-                silent=True  # 減少輸出日誌
-            )
+            # 使用更穩定的參數調用DeepFace
+            try:
+                result = DeepFace.analyze(
+                    img_path=temp_img_path,
+                    actions=['age', 'gender'],
+                    enforce_detection=False,  # 避免再次進行人臉檢測
+                    silent=True,  # 減少輸出日誌
+                    detector_backend='opencv'  # 使用更快的檢測器
+                )
+                
+                if isinstance(result, list) and len(result) > 0:
+                    result = result[0]
+                
+                # 處理性別數據，可能是標籤或含概率的字典
+                gender = result.get('gender', '未知')
+                # 如果性別是字典形式，例如 {'Woman': 8.02, 'Man': 91.97}
+                if isinstance(gender, dict):
+                    logger.info(f"性別分析結果(概率): {gender}")
+                    # 找出最高概率的性別
+                    gender = max(gender.items(), key=lambda x: x[1])[0]
+                    logger.info(f"選擇概率最高的性別: {gender}")
+                
+                age = result.get('age', 30)
+                
+                logger.info(f"成功分析 ID={person_id} 的人口統計數據: 性別={gender}, 年齡={age}")
+                
+                self.gender_age_data[person_id] = {
+                    'gender': gender,
+                    'age': age
+                }
+            except Exception as analyze_error:
+                logger.error(f"DeepFace分析錯誤: {str(analyze_error)}")
+                # 使用默認值
+                self.gender_age_data[person_id] = {
+                    'gender': '未知',
+                    'age': 30
+                }
             
-            if isinstance(result, list) and len(result) > 0:
-                result = result[0]
-            
-            gender = result.get('gender', '未知')
-            age = result.get('age', 30)
-            
-            self.gender_age_data[person_id] = {
-                'gender': gender,
-                'age': age
-            }
-            logger.info(f"人物ID {person_id} 的人口統計分析：性別={gender}, 年齡={age}")
+            # 清理臨時文件
+            try:
+                import os
+                if os.path.exists(temp_img_path):
+                    os.remove(temp_img_path)
+            except:
+                pass
+                
         except Exception as e:
             logger.error(f"人口統計分析錯誤：{str(e)}")
-            # 發生錯誤時設定默認值
+            # 發生錯誤時設定確定的默認值
             self.gender_age_data[person_id] = {
                 'gender': '未知',
                 'age': 30
@@ -125,6 +153,81 @@ class PersonTracker:
         total_visitors = len(self.persons)
         
         # 性別統計
+        gender_counts = {"男": 0, "女": 0, "未知": 0}
+        for person_id, data in self.gender_age_data.items():
+            gender = data.get('gender', '未知')
+            # 標準化性別標籤
+            if gender in ['Man', 'Male', '男']:
+                gender_counts["男"] += 1
+            elif gender in ['Woman', 'Female', '女']:
+                gender_counts["女"] += 1
+            else:
+                gender_counts["未知"] += 1
+        
+        # 年齡段統計
+        age_groups = {
+            "<18": 0,
+            "18-25": 0,
+            "26-35": 0,
+            "36-50": 0,
+            ">50": 0,
+            "未知": 0
+        }
+        
+        for person_id, data in self.gender_age_data.items():
+            age = data.get('age')
+            
+            if age is None or age == 'N/A' or age == '--' or age == '未知':
+                age_groups["未知"] += 1
+            else:
+                try:
+                    # 確保年齡是數值型
+                    age_val = float(age) if isinstance(age, str) else age
+                    if age_val < 18:
+                        age_groups["<18"] += 1
+                    elif 18 <= age_val <= 25:
+                        age_groups["18-25"] += 1
+                    elif 26 <= age_val <= 35:
+                        age_groups["26-35"] += 1
+                    elif 36 <= age_val <= 50:
+                        age_groups["36-50"] += 1
+                    else:
+                        age_groups[">50"] += 1
+                except (ValueError, TypeError):
+                    age_groups["未知"] += 1
+        
+        # 攤位流量統計
+        booth_traffic = defaultdict(int)
+        for person_id, locations in self.location_history.items():
+            for booth_id, _, _ in locations:
+                booth_traffic[booth_id] += 1
+        
+        # 針對目前仍在各攤位的訪客進行計數
+        for person_id, (booth_id, _) in self.current_location.items():
+            booth_traffic[booth_id] += 1
+        
+        # 平均停留時間（秒）
+        booth_avg_time = defaultdict(float)
+        booth_visit_count = defaultdict(int)
+        
+        for person_id, locations in self.location_history.items():
+            for booth_id, enter_time, exit_time in locations:
+                duration = exit_time - enter_time
+                booth_avg_time[booth_id] += duration
+                booth_visit_count[booth_id] += 1
+        
+        # 計算平均值
+        for booth_id in booth_avg_time:
+            if booth_visit_count[booth_id] > 0:
+                booth_avg_time[booth_id] /= booth_visit_count[booth_id]
+        
+        return {
+            "total_visitors": total_visitors,
+            "gender_counts": gender_counts,
+            "age_groups": age_groups,
+            "booth_traffic": dict(booth_traffic),
+            "booth_avg_time": dict(booth_avg_time)
+        }
 
 class BoothCamera:
     def __init__(self, booth_id, camera_source, person_tracker):
@@ -222,7 +325,7 @@ class BoothCamera:
                 logger.info(f"攝像頭 {self.booth_id} 偵測到 {len(face_locations)} 個人臉")
                 for i, face_location in enumerate(face_locations):
                     top, right, bottom, left = face_location
-                    logger.info(f"人臉 #{i+1} - 位置: 上={top}, 右={right}, 下={bottom}, 左={left}, 尺寸: {bottom-top}x{right-left}")
+                    #logger.info(f"人臉 #{i+1} - 位置: 上={top}, 右={right}, 下={bottom}, 左={left}, 尺寸: {bottom-top}x{right-left}")
             
             if len(face_locations) > 0:
                 try:
@@ -260,8 +363,8 @@ class BoothCamera:
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                         
                         # 始終顯示性別和年齡資訊
-                        gender = "未知"
-                        age = "未知"
+                        gender = "NA"
+                        age = "NA"
                         
                         # 如果有性別和年齡數據，則使用；否則使用默認值
                         if person_id in self.person_tracker.gender_age_data:
@@ -270,11 +373,11 @@ class BoothCamera:
                             
                             # 處理性別顯示
                             if gender_data == 'Woman' or gender_data == 'Female':
-                                gender = '女'
+                                gender = 'F'
                             elif gender_data == 'Man' or gender_data == 'Male':
-                                gender = '男'
+                                gender = 'M'
                             else:
-                                gender = gender_data if gender_data else "未知"
+                                gender = gender_data if gender_data else "NA"
                             
                             # 處理年齡顯示
                             if age_data:
@@ -282,12 +385,13 @@ class BoothCamera:
                                     age = str(int(age_data))
                                 else:
                                     age = str(age_data)
-                        
+                        # 添加日誌記錄 ID、年齡和性別信息
+                        logger.info(f"人臉 #{i+1} - ID: {person_id}, 性別: {gender}, 年齡: {age}")
                         # 顯示性別
-                        cv2.putText(display_frame, f"性別: {gender}", (left, top - 10), 
+                        cv2.putText(display_frame, f"gender: {gender}", (left, top - 10), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
                         # 顯示年齡
-                        cv2.putText(display_frame, f"年齡: {age}", (left, top + 10), 
+                        cv2.putText(display_frame, f"age: {age}", (left, top + 10), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                                     
                 except Exception as encode_error:
