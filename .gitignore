@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虛擬環境
+venv/
+ENV/
+.env
+.venv
+env/
+
+# 分佈式環境
+.Python
+.python-version
+
+# IDE 相關
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# 專案特定
+*.log
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# 臨時檔案
+*.tmp
+temp/
+tmp/
+
+# 模型和資料檔案 (根據需要可以取消註解)
+# *.h5
+# *.pkl
+# *.model
+# *.weights
+# *.csv
+# *.json
+# models/
+# data/
+
+# Docker 相關
+.dockerignore
+
+# MongoDB 資料
+db/
+.DS_Store
